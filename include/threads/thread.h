@@ -136,6 +136,8 @@ struct thread {
 
 #ifdef VM
     struct supplemental_page_table spt; /* 가상 메모리 테이블 */
+    /* 25.06.02 고재웅 추가 - %rsp 정보 저장 */
+    void *rsp;
 #endif
 	struct semaphore wait_sema;
 	struct semaphore fork_sema;
