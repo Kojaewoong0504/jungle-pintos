@@ -184,14 +184,17 @@ vm_get_frame(void)
 	return frame;
 }
 
+/* 25.05.30 정진영 작성
+ * 25.06.02 고재웅 수정
+ * 스택 최하단에 익명 페이지를 추가하여 사용
+ * addr은 PGSIZE로 내림(정렬)하여 사용 
+ * 페이지 주소관련 코드 수정 */
 /* Growing the stack. */
 static void
 vm_stack_growth(void *addr UNUSED)
 {
-	/* 25.05.30 정진영 작성
-	 * 스택 최하단에 익명 페이지를 추가하여 사용
-	 * addr은 PGSIZE로 내림(정렬)하여 사용 */
-	// vm_alloc_page(VM_ANON, addr, true); // 스택 최하단에 익명 페이지 추가
+	// 스택 최하단에 익명 페이지 추가
+	vm_alloc_page(VM_ANON | VM_MARKER_0 , pg_round_down(addr), 1); 
 }
 
 /* Handle the fault on write_protected page */
@@ -201,6 +204,7 @@ vm_handle_wp (struct page *page UNUSED)
 }
 
 /* 25.06.01 고재웅 작성 */
+/* 25.06.02 고재웅 수정 */
 /* Return true on success 
  * 페이지 폴트 핸들러 - 페이지 폴트 발생시 제어권을 전달 받는다.
  * 물리 프레임이 존재하지 않아서 발생한 예외는 not_present 가 true다
@@ -218,21 +222,31 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
-	// 1. 주소 유효성 검사
-	if (addr == NULL)
-		return false;
 
-	if (is_kernel_vaddr(addr))
+	// 1. 주소 유효성 검사
+	// addr 주소 유효성 검사
+	if (addr == NULL || is_kernel_vaddr(addr))
 		return false;
 
 	if (not_present) // 접근한 메모리의 physical page가 존재하지 않은 경우
     {
         /* TODO: Validate the fault */
+		void *rsp = f->rsp;
+		if (!user){
+			rsp = thread_current()->rsp;
+		}
+
+		if (USER_STACK - (1 << 20) <= rsp - 8 && rsp - 8 <= addr && addr <= USER_STACK)
+            vm_stack_growth(addr);
+			
         page = spt_find_page(spt, addr);
+		
         if (page == NULL)
             return false;
+
         if (write == 1 && page->writable == 0) // write 불가능한 페이지에 write 요청한 경우
             return false;
+			
         return vm_do_claim_page(page);
     }
     return false;
@@ -278,7 +292,9 @@ vm_do_claim_page (struct page *page)
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	/* 페이지의 VA와 프레임의 KVA를 페이지 테이블에 매핑 */
 	struct thread *current = thread_current();
-    pml4_set_page(current->pml4, page->va, frame->kva, page->writable);
+    if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)) {
+		return false;
+	}
 
 	return swap_in(page, frame->kva);
 }
