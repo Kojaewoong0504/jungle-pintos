@@ -152,23 +152,27 @@ void exit(int status){
 
 int write(int fd, const void *buffer, unsigned size) {
 	check_address(buffer);
+    lock_acquire(&filesys_lock);
 
     off_t bytes = -1;
 
-    if (fd <= 0)  // stdin에 쓰려고 할 경우 & fd 음수일 경우
+    if (fd <= 0){  // stdin에 쓰려고 할 경우 & fd 음수일 경우
+        lock_release(&filesys_lock);
         return -1;
-
+    }
     if (fd < 3) {  // 1(stdout) * 2(stderr) -> console로 출력
         putbuf(buffer, size);
+        lock_release(&filesys_lock);
         return size;
     }
 
     struct file *file = process_get_file(fd);
 
-    if (file == NULL)
+    if (file == NULL){
+        lock_release(&filesys_lock);
         return -1;
+    }
 
-    lock_acquire(&filesys_lock);
     bytes = file_write(file, buffer, size);
     lock_release(&filesys_lock);
 
@@ -187,7 +191,10 @@ bool create (const char *file, unsigned initial_size){
 
 bool remove (const char *file) {
 	check_address(file);
-	return filesys_remove(file);
+    lock_acquire(&filesys_lock);
+	bool is_success = filesys_remove(file);
+    lock_release(&filesys_lock);
+    return is_success;
 }
 
 int open (const char *file) {
@@ -333,29 +340,26 @@ int wait(tid_t pid){
 void *mmap (void *addr, size_t length, int writable, int fd, off_t offset){
     // TODO: 1. 유효성 검사
     // - addr이 NULL이 아니고 page-aligned인지 확인
-    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+    if (!addr || addr != pg_round_down(addr))
 		return NULL;
 
-    // - offset이 PGSIZE의 배수인지 확인
-    if (offset % PGSIZE != 0)
-        return NULL;
+	if (offset != pg_round_down(offset))
+		return NULL;
         
-    if (pg_round_down(addr) != addr)
-        return NULL;
+    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+		return NULL;
     
-    // - fd가 유효하고 콘솔 stdin/stdout/stderr이 아니어야 함
-    if (fd < 3)
-        return NULL;
+    if (spt_find_page(&thread_current()->spt, addr))
+		return NULL;
 
-    struct file *file = process_get_file(fd);
-    if (file == NULL)
-        return NULL;
+	struct file *f = process_get_file(fd);
+	if (f == NULL)
+		return NULL;
 
-    // - length가 0이 아니어야 함
-    if (file_length(file) == 0 || (int)length <= 0)
-        return NULL;
+    if (file_length(f) == 0 || (int)length <= 0)
+		return NULL;
 
-    return do_mmap(addr, length, writable, file, offset);
+	return do_mmap(addr, length, writable, f, offset);
 }
 
 /* 25.06.02 고재웅 작성 */

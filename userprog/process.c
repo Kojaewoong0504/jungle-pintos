@@ -430,7 +430,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (t->pml4 == NULL)
 		goto done;
 	process_activate (thread_current ());
-
+	lock_acquire(&filesys_lock);
 	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
@@ -529,6 +529,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	success = true;
 
 done:
+	lock_release(&filesys_lock);
 	return success;
 }
 
