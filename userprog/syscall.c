@@ -13,6 +13,7 @@
 #include "threads/palloc.h"
 #include <string.h>
 #include "vm/vm.h"
+#include "vm/file.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -25,6 +26,9 @@ void close (int fd);
 int wait(tid_t pid);
 void seek(int fd, unsigned position);
 int tell(int fd);
+/* 25.06.02 고재웅 작성 */
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
 /* System call.
  *
@@ -120,6 +124,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_CLOSE:
 		close(f->R.rdi);
 		break;
+    /* 25.06.02 고재웅 작성 */
+    case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+    case SYS_MUNMAP:
+        munmap(f->R.rdi);
+        break;
 	default:
 		exit(-1);
 	}
@@ -317,3 +328,37 @@ void close(int fd) {
 int wait(tid_t pid){
 	return process_wait(pid);
 };
+
+/* 25.06.02 고재웅 작성 */
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset){
+    // TODO: 1. 유효성 검사
+    // - addr이 NULL이 아니고 page-aligned인지 확인
+    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+		return NULL;
+
+    // - offset이 PGSIZE의 배수인지 확인
+    if (offset % PGSIZE != 0)
+        return NULL;
+        
+    if (pg_round_down(addr) != addr)
+        return NULL;
+    
+    // - fd가 유효하고 콘솔 stdin/stdout/stderr이 아니어야 함
+    if (fd < 3)
+        return NULL;
+
+    struct file *file = process_get_file(fd);
+    if (file == NULL)
+        return NULL;
+
+    // - length가 0이 아니어야 함
+    if (file_length(file) == 0 || (int)length <= 0)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+/* 25.06.02 고재웅 작성 */
+void munmap (void *addr){
+	do_munmap(addr);
+}

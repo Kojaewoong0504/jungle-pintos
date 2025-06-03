@@ -59,7 +59,7 @@ struct page {
 	struct hash_elem hash_elem;			// 해시 저장용 elem
 	bool writable; 						// 쓰기 가능한 페이지 인지
 	bool is_loaded;						// 실제로 프레임에 로드되어 있는지
-
+	int mapped_page_count; 				// 매핑된 페이지 개수
 	/* union은 여러 타입 중 하나만을 저장할 수 있는 특수한 자료형으로,  
 	 * 타입별 데이터는 union에 바인딩 됩니다. 각 함수는 현재 union을 자동으로 감지합니다. */
 	union {

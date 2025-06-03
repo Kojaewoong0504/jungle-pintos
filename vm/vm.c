@@ -10,6 +10,7 @@
 
 /* 25.05.30 고재웅 작성 */
 #include <hash.h>
+#include "userprog/process.h"
 #include "threads/vaddr.h"
 
 /* 각 서브시스템의 초기화 코드를 호출하여 가상 메모리 서브시스템을 초기화합니다. */
@@ -67,6 +68,9 @@ vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
 		 * TODO: 그런 다음 uninit_new를 호출하여 "uninit" 페이지 구조체를 생성합니다.
 		 * TODO: uninit_new를 호출한 후 필드를 수정해야 합니다. */
 		struct page *p = (struct page *)malloc(sizeof(struct page));
+		if (p == NULL){
+			return false;
+		}
 		bool (*page_initializer)(struct page *, enum vm_type, void *);
 
 		switch (VM_TYPE(type))
@@ -77,6 +81,9 @@ vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
 			case VM_FILE:
 				page_initializer = file_backed_initializer;
 				break;
+			default:
+				free(p);
+				return false;
 		}
 		/* TODO: spt에 페이지를 삽입합니다. */
 		uninit_new(p, upage, init, type, aux, page_initializer);
@@ -310,6 +317,8 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED)
 	hash_init(&spt->pages, page_hash, page_less, NULL);
 }
 
+/* 25.06.01 고재웅 작성 */
+/* 25.06.03 고재웅 수정 */
 /* Copy supplemental page table from src to dst */
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
@@ -332,6 +341,20 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 			void *aux = src_page->uninit.aux;
 			vm_alloc_page_with_initializer(VM_ANON, upage, writable, init, aux);
 			continue;
+		}
+		if (type == VM_FILE){
+			struct lazy_load_arg *file_aux = malloc(sizeof(struct lazy_load_arg));
+            file_aux->file = src_page->file.file;
+            file_aux->ofs = src_page->file.ofs;
+            file_aux->read_bytes = src_page->file.read_bytes;
+            file_aux->zero_bytes = src_page->file.zero_bytes;
+            if (!vm_alloc_page_with_initializer(type, upage, writable, NULL, file_aux))
+                return false;
+            struct page *file_page = spt_find_page(dst, upage);
+            file_backed_initializer(file_page, type, NULL);
+            file_page->frame = src_page->frame;
+            pml4_set_page(thread_current()->pml4, file_page->va, src_page->frame->kva, src_page->writable);
+            continue;
 		}
 
 		/* 2) type이 uninit이 아니면 */
