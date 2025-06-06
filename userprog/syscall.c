@@ -46,17 +46,23 @@ void munmap (void *addr);
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 
-void check_address(void *addr)
-{
-    // kernel VM 못가게, 할당된 page가 존재하도록(빈공간접근 못하게)
-    // if (is_kernel_vaddr(addr) || addr == NULL || pml4_get_page(thread_current()->pml4, addr) == NULL)
-    //     exit(-1);
-    /* 25.06.02 고재웅 수정 */
-    if (addr == NULL)
-		exit(-1);
-	if (!is_user_vaddr(addr))
-		exit(-1);
+struct page *check_address(void *addr) {
+    struct thread *curr = thread_current();
 
+    if (is_kernel_vaddr(addr) || addr == NULL || !spt_find_page(&curr->spt, addr))
+        exit(-1);
+
+    return spt_find_page(&curr->spt, addr);
+}
+
+void check_valid_buffer(void *buffer, size_t size, bool writable) {
+    for (size_t i = 0; i < size; i +=8) {
+        /* buffer가 spt에 존재하는지 검사 */
+        struct page *page = check_address(buffer + i);
+
+        if (!page || (writable && !(page->writable))) /** Project 3-Copy On Write */
+            exit(-1);
+    }
 }
 
 void
@@ -151,28 +157,25 @@ void exit(int status){
 }
 
 int write(int fd, const void *buffer, unsigned size) {
-	check_address(buffer);
-    lock_acquire(&filesys_lock);
+	check_valid_buffer(buffer, size, false);
 
     off_t bytes = -1;
 
     if (fd <= 0){  // stdin에 쓰려고 할 경우 & fd 음수일 경우
-        lock_release(&filesys_lock);
         return -1;
     }
     if (fd < 3) {  // 1(stdout) * 2(stderr) -> console로 출력
         putbuf(buffer, size);
-        lock_release(&filesys_lock);
         return size;
     }
 
     struct file *file = process_get_file(fd);
 
     if (file == NULL){
-        lock_release(&filesys_lock);
         return -1;
     }
 
+    lock_acquire(&filesys_lock);
     bytes = file_write(file, buffer, size);
     lock_release(&filesys_lock);
 
@@ -220,8 +223,7 @@ tid_t fork(const char *thread_name, struct intr_frame *f) {
 }
 
 int read(int fd, void *buffer, unsigned size) {
-	check_address(buffer);
-    lock_acquire(&filesys_lock);
+	check_valid_buffer(buffer, size, true);
     if (fd == 0) {  // 0(stdin) -> keyboard로 직접 입력
         int i = 0;  // 쓰레기 값 return 방지
         char c;
@@ -233,13 +235,11 @@ int read(int fd, void *buffer, unsigned size) {
             if (c == '\0')
                 break;
         }
-        lock_release(&filesys_lock);
         return i;
     }
     // 그 외의 경우
     if (fd < 3)  // stdout, stderr를 읽으려고 할 경우 & fd가 음수일 경우
     {
-        lock_release(&filesys_lock);
         return -1;
     }
 
@@ -248,17 +248,16 @@ int read(int fd, void *buffer, unsigned size) {
 
     if (file == NULL)  // 파일이 비어있을 경우
     {
-        lock_release(&filesys_lock);
         return -1;
     }
 
 #ifdef VM
     struct page *page = spt_find_page(&thread_current()->spt, buffer);
     if (page && !page->writable){
-        lock_release(&filesys_lock);
         exit(-1);
     }
 #endif
+    lock_acquire(&filesys_lock);
     bytes = file_read(file, buffer, size);
     lock_release(&filesys_lock);
 
@@ -339,6 +338,8 @@ int wait(tid_t pid){
 /* 25.06.02 고재웅 작성 */
 void *mmap (void *addr, size_t length, int writable, int fd, off_t offset){
     // TODO: 1. 유효성 검사
+    if (fd < 2)
+        return NULL;
     // - addr이 NULL이 아니고 page-aligned인지 확인
     if (!addr || addr != pg_round_down(addr))
 		return NULL;

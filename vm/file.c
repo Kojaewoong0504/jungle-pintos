@@ -31,7 +31,7 @@ bool
 file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* Set up the handler */
 	page->operations = &file_ops;
-
+	// page->writable = false;
 	struct file_page *file_page = &page->file;
 
 	// TODO: page에 page->uninit.aux에 들어있는 정보를 구조체로 형변환 (ex. lazy_load_arg *)
@@ -48,6 +48,7 @@ static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	struct file_page *file_page UNUSED = &page->file;
 	file_read_at (file_page->file, kva, file_page->read_bytes, file_page->ofs);
+	memset(kva + file_page->read_bytes, 0, page->file.zero_bytes);
 	return true;
 }
 
@@ -56,7 +57,9 @@ static bool
 file_backed_swap_out (struct page *page) {
 	struct file_page *file_page UNUSED = &page->file;
 	if (pml4_is_dirty(thread_current()->pml4, page->va) && page->writable) {
-		file_write_at(file_page->file, page->va, file_page->read_bytes, file_page->ofs);
+		lock_acquire(&filesys_lock);
+		file_write_at(file_page->file, page->frame->kva, file_page->read_bytes, file_page->ofs);
+		lock_release(&filesys_lock);
 		pml4_set_dirty(thread_current()->pml4, page->va, false);
 	}
 	page->frame->page = NULL;
@@ -77,15 +80,21 @@ file_backed_destroy (struct page *page) {
 		// TODO: dirty라면, 파일에 해당 내용을 file_write_at()으로 저장
 		// - page->va, aux->file, aux->offset 등에서 정보 추출
 		// - writable 여부도 확인
-		file_write_at(file_page->file, page->va, file_page->read_bytes, file_page->ofs);
+		lock_acquire(&filesys_lock);
+		file_write_at(file_page->file, page->frame->kva, file_page->read_bytes, file_page->ofs);
+		lock_release(&filesys_lock);
 		pml4_set_dirty(thread_current()->pml4, page->va, 0);
 	}
-	hash_delete(&thread_current()->spt.pages, &page->hash_elem);
-	if (page->frame) {
-		list_remove(&page->frame->elem);
-		page->frame->page = NULL;
+	// hash_delete(&thread_current()->spt.pages, &page->hash_elem);
+	if (page->frame != NULL) {
+		struct frame *f = page->frame;
+
+		if (--f->ref_count == 0) {
+			list_remove(&f->elem);
+			palloc_free_page(f->kva);
+			free(f);
+		}
 		page->frame = NULL;
-		free(page->frame);
 	}
 
 	pml4_clear_page(thread_current()->pml4, page->va);
@@ -100,9 +109,7 @@ do_mmap (void *addr, size_t length, int writable,
     // TODO: 2. fd에 대응하는 struct file * 구하기
     // - 열린 파일 디스크립터 테이블에서 찾고, 실패 시 NULL 반환
     // - file을 reopen하여 별도 참조를 유지 (중복 닫힘 방지)
-	lock_acquire(&filesys_lock);
 	struct file *f = file_reopen(file);
-	lock_release(&filesys_lock);
 	if (file == NULL) {
 		return NULL;
 	}

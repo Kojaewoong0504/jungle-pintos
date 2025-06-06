@@ -3,7 +3,7 @@
 #include "vm/vm.h"
 #include "devices/disk.h"
 #include "kernel/bitmap.h"
-
+#include "threads/mmu.h"
 
 struct bitmap *swap_table;
 struct lock bitmap_lock;
@@ -38,12 +38,15 @@ vm_anon_init (void) {
 /* Initialize the file mapping */
 bool
 anon_initializer (struct page *page, enum vm_type type, void *kva) {
+	if (page == NULL)
+	{
+		return false;
+	}
 	/* Set up the handler */
 	page->operations = &anon_ops;
 
 	struct anon_page *anon_page = &page->anon;
 	anon_page->swap_idx = BITMAP_ERROR;
-
 	return true;
 }
 
@@ -51,13 +54,15 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 static bool
 anon_swap_in (struct page *page, void *kva) {
 	struct anon_page *anon_page = &page->anon;
-
+	
 	size_t swap_idx = anon_page->swap_idx;
-	if (!bitmap_test(swap_table, swap_idx)) {
+	if (swap_idx == BITMAP_ERROR) {
+		PANIC("swap_in: swap_idx == BITMAP_ERROR. Not swapped out.");
 		return false;
 	}
-	if (swap_idx == BITMAP_ERROR) {
-		PANIC("swap_in idx is crazy");
+
+	if (!bitmap_test(swap_table, swap_idx)) {
+		PANIC("swap_in: bitmap_test failed. Invalid swap_idx.");
 		return false;
 	}
 
@@ -65,7 +70,6 @@ anon_swap_in (struct page *page, void *kva) {
 		disk_read(swap_disk, swap_idx * 8 + i, kva + i * DISK_SECTOR_SIZE);
 	}
 
-	page->frame->kva = kva;
 
 	lock_acquire(&bitmap_lock);
 	bitmap_set(swap_table, swap_idx, false);
@@ -111,11 +115,14 @@ anon_destroy (struct page *page) {
 	}
 
 	// 프레임이 존재하면 프레임을 리스트에서 제거하고 해제
-	if (page->frame) {
-		list_remove(&page->frame->elem);
-		page->frame->page = NULL;
-		palloc_free_page(page->frame->kva);
-		free(page->frame);
+	if (page->frame != NULL) {
+		struct frame *f = page->frame;
+
+		if (--f->ref_count == 0) {
+			list_remove(&f->elem);
+			palloc_free_page(f->kva);
+			free(f);
+		}
 		page->frame = NULL;
 	}
 

@@ -42,6 +42,7 @@ enum vm_type {
 struct page_operations;
 struct thread;
 struct list frame_table;
+struct lock frame_lock;
 
 #define VM_TYPE(type) ((type) & 7)
 
@@ -76,7 +77,8 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
-	struct list_elem elem; 
+	struct list_elem elem;
+	int ref_count; 
 };
 
 /* 페이지 작업을 위한 함수 테이블입니다.
