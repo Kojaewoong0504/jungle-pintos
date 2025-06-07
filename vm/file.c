@@ -109,7 +109,10 @@ do_mmap (void *addr, size_t length, int writable,
     // TODO: 2. fd에 대응하는 struct file * 구하기
     // - 열린 파일 디스크립터 테이블에서 찾고, 실패 시 NULL 반환
     // - file을 reopen하여 별도 참조를 유지 (중복 닫힘 방지)
+	lock_acquire(&filesys_lock);
 	struct file *f = file_reopen(file);
+	lock_release(&filesys_lock);
+
 	if (file == NULL) {
 		return NULL;
 	}

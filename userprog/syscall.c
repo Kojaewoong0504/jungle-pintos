@@ -49,19 +49,23 @@ void munmap (void *addr);
 struct page *check_address(void *addr) {
     struct thread *curr = thread_current();
 
-    if (is_kernel_vaddr(addr) || addr == NULL || !spt_find_page(&curr->spt, addr))
-        exit(-1);
+     if (addr == NULL || !is_user_vaddr (addr))
+        exit (-1);
 
-    return spt_find_page(&curr->spt, addr);
+    /* Return the page if it exists. */
+    return spt_find_page (&thread_current ()->spt, addr);
 }
 
 void check_valid_buffer(void *buffer, size_t size, bool writable) {
-    for (size_t i = 0; i < size; i +=8) {
-        /* buffer가 spt에 존재하는지 검사 */
-        struct page *page = check_address(buffer + i);
+    for (size_t i = 0; i < size; i++) {
+        void *addr = (char *) buffer + i;
+        struct page *page = spt_find_page (&thread_current ()->spt, addr);
 
-        if (!page || (writable && !(page->writable))) /** Project 3-Copy On Write */
-            exit(-1);
+        if (!is_user_vaddr (addr))
+            exit (-1);
+
+        if (writable && page && !page->writable)
+            exit (-1);
     }
 }
 
