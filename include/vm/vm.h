@@ -45,6 +45,7 @@ struct list frame_table;
 
 #define VM_TYPE(type) ((type) & 7)
 
+/* 25.06.04 정진영 수정 (mmap_idx 추가) */
 /* "페이지" 표현
  * 이는 일종의 "부모 클래스"이며, 네 개의 "자식 클래스"를 갖습니다.
  * uninit_page, file_page, anon_page, 그리고 page cache(project4)입니다.
@@ -59,6 +60,7 @@ struct page {
 	struct hash_elem hash_elem;			// 해시 저장용 elem
 	bool writable; 						// 쓰기 가능한 페이지 인지
 	bool is_loaded;						// 실제로 프레임에 로드되어 있는지
+	int mmap_idx;						// mmap 전체 중 몇번째 페이지인지를 기록
 
 	/* union은 여러 타입 중 하나만을 저장할 수 있는 특수한 자료형으로,  
 	 * 타입별 데이터는 union에 바인딩 됩니다. 각 함수는 현재 union을 자동으로 감지합니다. */
@@ -76,7 +78,7 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
-	struct list_elem elem; 
+	struct list_elem elem;	/* 25.05.30 고재웅 작성 */
 };
 
 /* 페이지 작업을 위한 함수 테이블입니다.
@@ -90,6 +92,33 @@ struct page_operations {
 	enum vm_type type;
 };
 
+/* lazy load 시 사용되는 argument 구조체 */
+struct lazy_load_arg {
+    struct file *file;
+    off_t ofs;
+    uint32_t read_bytes;
+    uint32_t zero_bytes;
+};
+
+/* lazy load 시 사용되는 argument 구조체 */
+// struct lazy_load_arg {
+//     enum vm_type type;
+//     union {
+//         struct {
+//             struct file *file;
+//             off_t ofs;
+//             uint32_t read_bytes;
+//             uint32_t zero_bytes;
+//         } file_arg;
+//         struct {
+//             struct file *file;
+//             off_t ofs;
+//             uint32_t read_bytes;
+//             uint32_t zero_bytes;
+//         } anon_arg;
+//     };
+// };
+
 #define swap_in(page, v) (page)->operations->swap_in ((page), v)
 #define swap_out(page) (page)->operations->swap_out (page)
 #define destroy(page) \
@@ -99,8 +128,7 @@ struct page_operations {
  * 이 구조체에 대해 특정 설계를 강제하지 않습니다.
  * 모든 설계는 여러분에게 달려 있습니다. */
 struct supplemental_page_table {
-	/* 25.05.30 고재웅 작성 */
-	struct hash pages;
+	struct hash pages;		/* 25.05.30 고재웅 작성 */
 };
 
 #include "threads/thread.h"
@@ -130,5 +158,8 @@ enum vm_type page_get_type (struct page *page);
 uint64_t page_hash(const struct hash_elem *e, void *aux);
 bool page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux);
 void hash_page_destroy(struct hash_elem *e, void *aux);
+
+/* 25.06.06 정진영 작성 */
+#define STACK_LIMIT (USER_STACK - (1 << 20))
 
 #endif  /* VM_VM_H */

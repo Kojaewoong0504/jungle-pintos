@@ -79,7 +79,6 @@ core
 Thumbs.db
 
 # IDE 관련 파일
-.vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project

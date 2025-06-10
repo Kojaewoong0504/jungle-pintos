@@ -21,4 +21,8 @@ int process_add_file(struct file *f);
 struct file *process_get_file(int fd);
 int process_close_file(int fd);
 
+#ifdef VM
+bool lazy_load_segment(struct page *page, void *aux);
+#endif
+
 #endif /* userprog/process.h */
