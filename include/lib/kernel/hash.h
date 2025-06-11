@@ -1,24 +1,19 @@
 #ifndef __LIB_KERNEL_HASH_H
 #define __LIB_KERNEL_HASH_H
 
-/* Hash table.
+/* 해시 테이블:
  *
- * This data structure is thoroughly documented in the Tour of
- * Pintos for Project 3.
+ * 이 자료구조는 Pintos Project 3의 Tour of Pintos에서 자세히 설명되어 있습니다.
  *
- * This is a standard hash table with chaining.  To locate an
- * element in the table, we compute a hash function over the
- * element's data and use that as an index into an array of
- * doubly linked lists, then linearly search the list.
+ * 이 구조는 체이닝(chaining)을 사용하는 표준 해시 테이블입니다. 테이블에서 요소를 찾으려면,
+ * 요소의 데이터에 대해 해시 함수를 계산하고, 그 값을 이중 연결 리스트 배열의 인덱스로 사용한 뒤,
+ * 해당 리스트를 선형 탐색합니다.
  *
- * The chain lists do not use dynamic allocation.  Instead, each
- * structure that can potentially be in a hash must embed a
- * struct hash_elem member.  All of the hash functions operate on
- * these `struct hash_elem's.  The hash_entry macro allows
- * conversion from a struct hash_elem back to a structure object
- * that contains it.  This is the same technique used in the
- * linked list implementation.  Refer to lib/kernel/list.h for a
- * detailed explanation. */
+ * 체인 리스트는 동적 할당을 사용하지 않습니다. 대신, 해시에 들어갈 수 있는 각 구조체는
+ * 반드시 struct hash_elem 멤버를 포함해야 합니다. 모든 해시 함수는 이 struct hash_elem을
+ * 대상으로 동작합니다. hash_entry 매크로를 사용하면 struct hash_elem에서
+ * 이를 포함하는 구조체 객체로 다시 변환할 수 있습니다. 이 기법은 연결 리스트 구현에서도
+ * 사용됩니다. 자세한 설명은 lib/kernel/list.h를 참고하세요. */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -39,19 +34,17 @@ struct hash_elem {
 	((STRUCT *) ((uint8_t *) &(HASH_ELEM)->list_elem        \
 		- offsetof (STRUCT, MEMBER.list_elem)))
 
-/* Computes and returns the hash value for hash element E, given
- * auxiliary data AUX. */
+/* 보조 데이터 AUX가 주어졌을 때, 해시 요소 E의 해시 값을 계산하여 반환합니다. */
 typedef uint64_t hash_hash_func (const struct hash_elem *e, void *aux);
 
-/* Compares the value of two hash elements A and B, given
- * auxiliary data AUX.  Returns true if A is less than B, or
- * false if A is greater than or equal to B. */
+/* 보조 데이터 AUX가 주어지면 두 해시 요소 A와 B의 값을 비교합니다.
+ * A가 B보다 작으면 true를 반환하고,
+ * A가 B보다 크거나 같으면 false를 반환합니다. */
 typedef bool hash_less_func (const struct hash_elem *a,
 		const struct hash_elem *b,
 		void *aux);
 
-/* Performs some operation on hash element E, given auxiliary
- * data AUX. */
+/* 보조 데이터 AUX가 주어지면 해시 요소 E에 대해 일부 연산을 수행합니다. */
 typedef void hash_action_func (struct hash_elem *e, void *aux);
 
 /* Hash table. */
@@ -96,5 +89,7 @@ bool hash_empty (struct hash *);
 uint64_t hash_bytes (const void *, size_t);
 uint64_t hash_string (const char *);
 uint64_t hash_int (int);
+
+
 
 #endif /* lib/kernel/hash.h */

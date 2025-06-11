@@ -1,26 +1,34 @@
+/* vm.h: 
+ * 가상 메모리(Virtual Memory) 시스템이 지원해야 하는 각기 다른 vm_type(가상 메모리 타입)들 
+ * -- VM_UNINIT, VM_ANON, VM_FILE, VM_PAGE_CACHE -- 의 정의와 설명
+ */
+
 #ifndef VM_VM_H
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include <hash.h>	/* Project 3: Memory Management */
 
 enum vm_type {
-	/* page not initialized */
+	/* 초기화되지 않은 페이지 */
 	VM_UNINIT = 0,
-	/* page not related to the file, aka anonymous page */
+	/* 파일과 관련 없는 페이지, 즉 익명 페이지 */
 	VM_ANON = 1,
-	/* page that realated to the file */
+	/* 파일과 관련된 페이지 */
 	VM_FILE = 2,
-	/* page that hold the page cache, for project 4 */
+	/* 페이지 캐시를 보유하는 페이지, for project 4 */
 	VM_PAGE_CACHE = 3,
+	/* mmap 파일 페이지 */
+	VM_MMAP = 4,
 
-	/* Bit flags to store state */
+	/* 상태를 저장하기 위한 비트 플래그 */
 
-	/* Auxillary bit flag marker for store information. You can add more
-	 * markers, until the value is fit in the int. */
-	VM_MARKER_0 = (1 << 3),
+	/* 추가 정보를 저장하기 위한 보조 비트 플래그 마커입니다.
+	 * int 범위 내에서 값을 추가할 수 있습니다. */
+	VM_MARKER_0 = (1 << 3), // 이 값을 스택 저장 페이지를 구분하기 위해 사용하겠다.
 	VM_MARKER_1 = (1 << 4),
 
-	/* DO NOT EXCEED THIS VALUE. */
+	/* 이 값을 초과하지 마세요. */
 	VM_MARKER_END = (1 << 31),
 };
 
@@ -33,22 +41,28 @@ enum vm_type {
 
 struct page_operations;
 struct thread;
+struct list frame_table;
+struct lock frame_lock;
 
 #define VM_TYPE(type) ((type) & 7)
 
-/* The representation of "page".
- * This is kind of "parent class", which has four "child class"es, which are
- * uninit_page, file_page, anon_page, and page cache (project4).
- * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
+/* "페이지" 표현
+ * 이는 일종의 "부모 클래스"이며, 네 개의 "자식 클래스"를 갖습니다.
+ * uninit_page, file_page, anon_page, 그리고 page cache(project4)입니다.
+ * 이 구조체의 미리 정의된 멤버를 제거하거나 수정하지 마십시오. */
 struct page {
-	const struct page_operations *operations;
-	void *va;              /* Address in terms of user space */
-	struct frame *frame;   /* Back reference for frame */
+	const struct page_operations *operations;	/* 페이지에 대한 동작 함수 (swap-in, swap-out 등) */
+	void *va;              						/* 사용자 주소 공간의 가상 주소 */
+	struct frame *frame;   						/* 이 페이지가 매핑된 물리 프레임 */
 
 	/* Your implementation */
-
-	/* Per-type data are binded into the union.
-	 * Each function automatically detects the current union */
+	/* 25.05.30 고재웅 작성 */
+	struct hash_elem hash_elem;			// 해시 저장용 elem
+	bool writable; 						// 쓰기 가능한 페이지 인지
+	bool is_loaded;						// 실제로 프레임에 로드되어 있는지
+	int mapped_page_count; 				// 매핑된 페이지 개수
+	/* union은 여러 타입 중 하나만을 저장할 수 있는 특수한 자료형으로,  
+	 * 타입별 데이터는 union에 바인딩 됩니다. 각 함수는 현재 union을 자동으로 감지합니다. */
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
@@ -63,12 +77,14 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem elem;
+	int ref_count; 
 };
 
-/* The function table for page operations.
- * This is one way of implementing "interface" in C.
- * Put the table of "method" into the struct's member, and
- * call it whenever you needed. */
+/* 페이지 작업을 위한 함수 테이블입니다.
+ * 이는 C에서 "인터페이스"를 구현하는 한 가지 방법입니다.
+ * "메서드"의 테이블을 구조체의 멤버에 넣고,
+ * 필요할 때마다 호출하면 됩니다. */
 struct page_operations {
 	bool (*swap_in) (struct page *, void *);
 	bool (*swap_out) (struct page *);
@@ -81,10 +97,12 @@ struct page_operations {
 #define destroy(page) \
 	if ((page)->operations->destroy) (page)->operations->destroy (page)
 
-/* Representation of current process's memory space.
- * We don't want to force you to obey any specific design for this struct.
- * All designs up to you for this. */
+/* 현재 프로세스의 메모리 공간을 나타냅니다.
+ * 이 구조체에 대해 특정 설계를 강제하지 않습니다.
+ * 모든 설계는 여러분에게 달려 있습니다. */
 struct supplemental_page_table {
+	/* 25.05.30 고재웅 작성 */
+	struct hash pages;
 };
 
 #include "threads/thread.h"
@@ -108,5 +126,11 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+
+/* 25.05.30 고재웅 작성 */
+/* SPT 해시 테이블에 넣기 위한 hash_func & less_func 함수 선언 */
+uint64_t page_hash(const struct hash_elem *e, void *aux);
+bool page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux);
+void hash_page_destroy(struct hash_elem *e, void *aux);
 
 #endif  /* VM_VM_H */

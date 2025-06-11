@@ -12,6 +12,8 @@
 #include "userprog/process.h"
 #include "threads/palloc.h"
 #include <string.h>
+#include "vm/vm.h"
+#include "vm/file.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -24,6 +26,9 @@ void close (int fd);
 int wait(tid_t pid);
 void seek(int fd, unsigned position);
 int tell(int fd);
+/* 25.06.02 고재웅 작성 */
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 
 /* System call.
  *
@@ -41,11 +46,27 @@ int tell(int fd);
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 
-void check_address(void *addr)
-{
-    // kernel VM 못가게, 할당된 page가 존재하도록(빈공간접근 못하게)
-    if (is_kernel_vaddr(addr) || addr == NULL || pml4_get_page(thread_current()->pml4, addr) == NULL)
-        exit(-1);
+struct page *check_address(void *addr) {
+    struct thread *curr = thread_current();
+
+     if (addr == NULL || !is_user_vaddr (addr))
+        exit (-1);
+
+    /* Return the page if it exists. */
+    return spt_find_page (&thread_current ()->spt, addr);
+}
+
+void check_valid_buffer(void *buffer, size_t size, bool writable) {
+    for (size_t i = 0; i < size; i++) {
+        void *addr = (char *) buffer + i;
+        struct page *page = spt_find_page (&thread_current ()->spt, addr);
+
+        if (!is_user_vaddr (addr))
+            exit (-1);
+
+        if (writable && page && !page->writable)
+            exit (-1);
+    }
 }
 
 void
@@ -65,6 +86,10 @@ syscall_init (void) {
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f UNUSED) {
+/* 25.06.02 고재웅 작성 - syscall(컨택스트 스위칭) 시 rsp 저장 */
+#ifdef VM
+	thread_current()->rsp = f->rsp;
+#endif
 	switch (f->R.rax)
 	{
 	case SYS_HALT:
@@ -109,6 +134,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_CLOSE:
 		close(f->R.rdi);
 		break;
+    /* 25.06.02 고재웅 작성 */
+    case SYS_MMAP:
+        f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+        break;
+    case SYS_MUNMAP:
+        munmap(f->R.rdi);
+        break;
 	default:
 		exit(-1);
 	}
@@ -129,13 +161,13 @@ void exit(int status){
 }
 
 int write(int fd, const void *buffer, unsigned size) {
-	check_address(buffer);
+	check_valid_buffer(buffer, size, false);
 
     off_t bytes = -1;
 
-    if (fd <= 0)  // stdin에 쓰려고 할 경우 & fd 음수일 경우
+    if (fd <= 0){  // stdin에 쓰려고 할 경우 & fd 음수일 경우
         return -1;
-
+    }
     if (fd < 3) {  // 1(stdout) * 2(stderr) -> console로 출력
         putbuf(buffer, size);
         return size;
@@ -143,8 +175,9 @@ int write(int fd, const void *buffer, unsigned size) {
 
     struct file *file = process_get_file(fd);
 
-    if (file == NULL)
+    if (file == NULL){
         return -1;
+    }
 
     lock_acquire(&filesys_lock);
     bytes = file_write(file, buffer, size);
@@ -156,28 +189,36 @@ int write(int fd, const void *buffer, unsigned size) {
 
 
 bool create (const char *file, unsigned initial_size){
+    lock_acquire(&filesys_lock);
 	check_address(file);
-    return filesys_create(file, initial_size);
+    bool success = filesys_create(file, initial_size);
+	lock_release(&filesys_lock);
+	return success;
 }
 
 bool remove (const char *file) {
 	check_address(file);
-	return filesys_remove(file);
+    lock_acquire(&filesys_lock);
+	bool is_success = filesys_remove(file);
+    lock_release(&filesys_lock);
+    return is_success;
 }
 
 int open (const char *file) {
 	check_address(file);
+    lock_acquire(&filesys_lock);
     struct file *newfile = filesys_open(file);
-
     if (newfile == NULL)
-        return -1;
-
+	{
+		lock_release(&filesys_lock);
+		return -1;
+	}
     int fd = process_add_file(newfile);
 
     if (fd == -1)
         file_close(newfile);
-
-    return fd;
+    lock_release(&filesys_lock);
+    return fd; 
 }
 
 tid_t fork(const char *thread_name, struct intr_frame *f) {
@@ -186,8 +227,7 @@ tid_t fork(const char *thread_name, struct intr_frame *f) {
 }
 
 int read(int fd, void *buffer, unsigned size) {
-	check_address(buffer);
-
+	check_valid_buffer(buffer, size, true);
     if (fd == 0) {  // 0(stdin) -> keyboard로 직접 입력
         int i = 0;  // 쓰레기 값 return 방지
         char c;
@@ -199,19 +239,28 @@ int read(int fd, void *buffer, unsigned size) {
             if (c == '\0')
                 break;
         }
-
         return i;
     }
     // 그 외의 경우
     if (fd < 3)  // stdout, stderr를 읽으려고 할 경우 & fd가 음수일 경우
+    {
         return -1;
+    }
 
     struct file *file = process_get_file(fd);
     off_t bytes = -1;
 
     if (file == NULL)  // 파일이 비어있을 경우
+    {
         return -1;
+    }
 
+#ifdef VM
+    struct page *page = spt_find_page(&thread_current()->spt, buffer);
+    if (page && !page->writable){
+        exit(-1);
+    }
+#endif
     lock_acquire(&filesys_lock);
     bytes = file_read(file, buffer, size);
     lock_release(&filesys_lock);
@@ -289,3 +338,36 @@ void close(int fd) {
 int wait(tid_t pid){
 	return process_wait(pid);
 };
+
+/* 25.06.02 고재웅 작성 */
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset){
+    // TODO: 1. 유효성 검사
+    if (fd < 2)
+        return NULL;
+    // - addr이 NULL이 아니고 page-aligned인지 확인
+    if (!addr || addr != pg_round_down(addr))
+		return NULL;
+
+	if (offset != pg_round_down(offset))
+		return NULL;
+        
+    if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+		return NULL;
+    
+    if (spt_find_page(&thread_current()->spt, addr))
+		return NULL;
+
+	struct file *f = process_get_file(fd);
+	if (f == NULL)
+		return NULL;
+
+    if (file_length(f) == 0 || (int)length <= 0)
+		return NULL;
+
+	return do_mmap(addr, length, writable, f, offset);
+}
+
+/* 25.06.02 고재웅 작성 */
+void munmap (void *addr){
+	do_munmap(addr);
+}

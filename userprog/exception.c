@@ -84,8 +84,9 @@ kill (struct intr_frame *f) {
 		case SEL_UCSEG:
 			/* User's code segment, so it's a user exception, as we
 			   expected.  Kill the user process.  */
-			printf("%s: exit(-1)\n", t->name);
-			t->exit_status = -1;
+			printf("%s: dying due to interrupt %#04llx (%s).\n",
+			   thread_name(), f->vec_no, intr_name(f->vec_no));
+			intr_dump_frame(f);
 			thread_exit();
 
 		case SEL_KCSEG:
@@ -139,7 +140,6 @@ page_fault (struct intr_frame *f) {
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
-	exit(-1);
 #ifdef VM
 	/* For project 3 and later. */
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
@@ -148,12 +148,13 @@ page_fault (struct intr_frame *f) {
 
 	/* Count page faults. */
 	page_fault_cnt++;
+	exit(-1);
 
 	/* If the fault is true fault, show info and exit. */
-	// printf ("Page fault at %p: %s error %s page in %s context.\n",
-	// 		fault_addr,
-	// 		not_present ? "not present" : "rights violation",
-	// 		write ? "writing" : "reading",
-	// 		user ? "user" : "kernel");
-	// kill (f);
+	printf ("Page fault at %p: %s error %s page in %s context.\n",
+			fault_addr,
+			not_present ? "not present" : "rights violation",
+			write ? "writing" : "reading",
+			user ? "user" : "kernel");
+	kill (f);
 }
