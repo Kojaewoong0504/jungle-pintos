@@ -21,6 +21,7 @@
 #include "lib/stdio.h"
 #include "intrinsic.h"
 #include "threads/synch.h"
+#include "userprog/syscall.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -182,9 +183,9 @@ __do_fork (void *aux) {
             continue;
         current->fd_table[fd] = file_duplicate(parent->fd_table[fd]);
     }
-
+	lock_acquire(&filesys_lock);
     sema_up(&current->fork_sema);  // fork 프로세스가 정상적으로 완료됐으므로 현재 fork용 sema unblock
-
+	lock_release(&filesys_lock);
     process_init();
 
     /* Finally, switch to the newly created process. */
@@ -429,7 +430,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (t->pml4 == NULL)
 		goto done;
 	process_activate (thread_current ());
-
+	lock_acquire(&filesys_lock);
 	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
@@ -528,6 +529,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	success = true;
 
 done:
+	lock_release(&filesys_lock);
 	return success;
 }
 
@@ -680,19 +682,11 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
-struct lazy_load_arg {
-	struct file *file;
-	off_t ofs;
-	uint32_t read_bytes;
-	uint32_t zero_bytes;
-};
-
-
 /* 25.06.01 고재웅 작성 
  * aux를 인자로 받는데 이 aux 위에 정의된 lazy_load_arg를 받는다. 
  * 이 lazy_load_arg는 load_segment에서 저장된다.
  */
-static bool
+bool
 lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */

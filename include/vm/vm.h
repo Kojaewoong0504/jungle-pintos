@@ -25,7 +25,7 @@ enum vm_type {
 
 	/* 추가 정보를 저장하기 위한 보조 비트 플래그 마커입니다.
 	 * int 범위 내에서 값을 추가할 수 있습니다. */
-	VM_MARKER_0 = (1 << 3),
+	VM_MARKER_0 = (1 << 3), // 이 값을 스택 저장 페이지를 구분하기 위해 사용하겠다.
 	VM_MARKER_1 = (1 << 4),
 
 	/* 이 값을 초과하지 마세요. */
@@ -42,6 +42,7 @@ enum vm_type {
 struct page_operations;
 struct thread;
 struct list frame_table;
+struct lock frame_lock;
 
 #define VM_TYPE(type) ((type) & 7)
 
@@ -59,7 +60,7 @@ struct page {
 	struct hash_elem hash_elem;			// 해시 저장용 elem
 	bool writable; 						// 쓰기 가능한 페이지 인지
 	bool is_loaded;						// 실제로 프레임에 로드되어 있는지
-
+	int mapped_page_count; 				// 매핑된 페이지 개수
 	/* union은 여러 타입 중 하나만을 저장할 수 있는 특수한 자료형으로,  
 	 * 타입별 데이터는 union에 바인딩 됩니다. 각 함수는 현재 union을 자동으로 감지합니다. */
 	union {
@@ -76,7 +77,8 @@ struct page {
 struct frame {
 	void *kva;
 	struct page *page;
-	struct list_elem elem; 
+	struct list_elem elem;
+	int ref_count; 
 };
 
 /* 페이지 작업을 위한 함수 테이블입니다.
